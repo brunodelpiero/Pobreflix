@@ -1,0 +1,15 @@
+# vídeos
+*.mp4
+*.mkv
+*.avi
+
+# capas grandes (opcional)
+*.jpg
+*.png
+
+# node
+node_modules/
+
+# sistema
+.DS_Store
+Thumbs.db
