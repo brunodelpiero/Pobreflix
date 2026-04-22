@@ -16,22 +16,72 @@ http.createServer((req, res) => {
 
   // Página inicial lista vídeos
   if (req.url === '/') {
-    const files = fs.readdirSync(VIDEO_DIR)
-      .filter(f => f.match(/\.(mp4|avi|mkv)$/));
 
-    const list = files.map(f => {
-  const name = f.replace(/\.(mp4|avi|mkv)$/i, '');
-  const img = `${name}.jpg`;
+   let list = '';
 
-  return `
-    <a href="/watch?file=${f}">
-      <div class="card">
-        <img src="/thumb?img=${img}">
-        <div class="title">${name}</div>
-      </div>
-    </a>
-  `;
-}).join('');
+// ===== FILMES =====
+const filmesPath = path.join(VIDEO_DIR, 'Filmes');
+
+if (fs.existsSync(filmesPath)) {
+  const categorias = fs.readdirSync(filmesPath);
+
+  categorias.forEach(cat => {
+    const catPath = path.join(filmesPath, cat);
+
+    if (fs.statSync(catPath).isDirectory()) {
+
+      const files = fs.readdirSync(catPath)
+        .filter(f => f.match(/\.(mp4|avi|mkv)$/));
+
+      files.forEach(f => {
+        const name = f.replace(/\.(mp4|avi|mkv)$/i, '');
+        const img = `${name}.jpg`;
+
+        list += `
+          <a href="/watch?file=Filmes/${cat}/${f}">
+            <div class="card">
+              <img src="/thumb?img=Filmes/${cat}/${img}">
+              <div class="title">${name}</div>
+            </div>
+          </a>
+        `;
+      });
+
+    }
+  });
+}
+
+
+// ===== SERIES =====
+const seriesPath = path.join(VIDEO_DIR, 'Series');
+
+if (fs.existsSync(seriesPath)) {
+  const categorias = fs.readdirSync(seriesPath);
+
+  categorias.forEach(cat => {
+    const catPath = path.join(seriesPath, cat);
+
+    if (fs.statSync(catPath).isDirectory()) {
+
+      const files = fs.readdirSync(catPath)
+        .filter(f => f.match(/\.(mp4|avi|mkv)$/));
+
+      files.forEach(f => {
+        const name = f.replace(/\.(mp4|avi|mkv)$/i, '');
+
+        list += `
+          <a href="/watch?file=Series/${cat}/${f}">
+            <div class="card">
+              <div class="thumb">📺</div>
+              <div class="title">${cat} - ${name}</div>
+            </div>
+          </a>
+        `;
+      });
+
+    }
+  });
+}
 
     res.writeHead(200, { 'Content-Type': 'text/html' });
 return res.end(`
@@ -232,5 +282,5 @@ return res.end(`
   }
 
 }).listen(PORT, '0.0.0.0', () => {
-  console.log(`http://192.168.98.16:${PORT}`);
+  console.log(`http://192.168.98.14:${PORT}`);
 });
