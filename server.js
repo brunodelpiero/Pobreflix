@@ -17,7 +17,8 @@ http.createServer((req, res) => {
   // Página inicial lista vídeos
   if (req.url === '/') {
 
-   let list = '';
+    let filmesList = '';
+    let seriesList = '';
 
 // ===== FILMES =====
 const filmesPath = path.join(VIDEO_DIR, 'Filmes');
@@ -37,7 +38,7 @@ if (fs.existsSync(filmesPath)) {
         const name = f.replace(/\.(mp4|avi|mkv)$/i, '');
         const img = `${name}.jpg`;
 
-        list += `
+        filmesList += `
           <a href="/watch?file=Filmes/${cat}/${f}">
             <div class="card">
               <img src="/thumb?img=Filmes/${cat}/${img}">
@@ -69,11 +70,11 @@ if (fs.existsSync(seriesPath)) {
       files.forEach(f => {
         const name = f.replace(/\.(mp4|avi|mkv)$/i, '');
 
-        list += `
-          <a href="/watch?file=Series/${cat}/${f}">
+        seriesList += `
+          <a href="/serie?nome=${cat}">
             <div class="card">
               <div class="thumb">📺</div>
-              <div class="title">${cat} - ${name}</div>
+              <div class="title">${cat}</div>
             </div>
           </a>
         `;
@@ -153,8 +154,14 @@ return res.end(`
 
   <h1>🎬 POBREFLIX</h1>
 
- <div class="grid">
-  ${list}
+ <h2 style="padding: 20px;">🎬 Filmes</h2>
+<div class="grid">
+  ${filmesList}
+</div>
+
+<h2 style="padding: 20px;">📺 Séries</h2>
+<div class="grid">
+  ${seriesList}
 </div>
 
 </body>
@@ -163,6 +170,50 @@ return res.end(`
   }
 
   // Página de player
+  
+  else if (req.url.startsWith('/serie')) {
+  const nome = new URL(req.url, `http://${req.headers.host}`).searchParams.get('nome');
+
+  const seriePath = path.join(VIDEO_DIR, 'Series', nome);
+
+  if (!fs.existsSync(seriePath)) {
+    res.writeHead(404);
+    return res.end('Série não encontrada');
+  }
+
+  const files = fs.readdirSync(seriePath)
+    .filter(f => f.match(/\.(mp4|avi|mkv)$/));
+
+  const list = files.map((f, i) => {
+    return `
+      <a href="/watch?file=Series/${nome}/${f}&index=${i}&serie=${nome}">
+        <div class="card">
+          <div class="thumb">▶</div>
+          <div class="title">${f}</div>
+        </div>
+      </a>
+    `;
+  }).join('');
+
+  res.writeHead(200, { 'Content-Type': 'text/html' });
+
+  return res.end(`
+    <html>
+    <body style="background:#141414;color:white;font-family:Arial">
+
+      <h1 style="padding:20px">${nome}</h1>
+
+      <div class="grid">
+        ${list}
+      </div>
+
+      <a href="/" style="position:absolute;top:10px;left:10px;color:white">⬅ Voltar</a>
+
+    </body>
+    </html>
+  `);
+}
+  
   else if (req.url.startsWith('/watch')) {
     const file = new URL(req.url, `http://${req.headers.host}`).searchParams.get('file');
 
@@ -208,10 +259,6 @@ return res.end(`
   <div class="topbar">
     <a href="/">⬅ Voltar</a>
   </div>
-
-  <video controls autoplay>
-    <source src="/video?file=${file}">
-  </video>
 
 </body>
 </html>
