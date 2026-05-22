@@ -1,333 +1,223 @@
-const http = require('http');
-const fs = require('fs');
-const path = require('path');
+import express from 'express';
+import path from 'node:path';
+import fs from 'node:fs';
+import os from 'node:os';
+import { fileURLToPath } from 'node:url';
 
-const PORT = 3000;
-const VIDEO_DIR = __dirname; // pasta atual
+import { safeJoin } from './lib/safePath.js';
+import { scanMovies, scanSeries, listEpisodes } from './lib/library.js';
+import { renderHome } from './views/home.js';
+import { renderSerie } from './views/serie.js';
+import { renderWatch } from './views/watch.js';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const PORT = Number(process.env.PORT) || 3000;
+const VIDEO_DIR = process.env.VIDEO_DIR
+  ? path.resolve(process.env.VIDEO_DIR)
+  : __dirname;
+
+const app = express();
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Helpers
+// ─────────────────────────────────────────────────────────────────────────────
+
+const CONTENT_TYPES = {
+  '.mp4': 'video/mp4',
+  '.mkv': 'video/x-matroska',
+  '.avi': 'video/x-msvideo',
+  '.webm': 'video/webm',
+  '.mov': 'video/quicktime',
+};
+
+const IMAGE_TYPES = {
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.png': 'image/png',
+  '.webp': 'image/webp',
+};
 
 function getContentType(file) {
-  if (file.endsWith('.mp4')) return 'video/mp4';
-  if (file.endsWith('.avi')) return 'video/x-msvideo';
-  if (file.endsWith('.mkv')) return 'video/x-matroska';
-  return 'application/octet-stream';
+  return CONTENT_TYPES[path.extname(file).toLowerCase()] || 'application/octet-stream';
 }
 
-http.createServer((req, res) => {
-
-  // Página inicial lista vídeos
-  if (req.url === '/') {
-
-    let filmesList = '';
-    let seriesList = '';
-
-// ===== FILMES =====
-const filmesPath = path.join(VIDEO_DIR, 'Filmes');
-
-if (fs.existsSync(filmesPath)) {
-  const categorias = fs.readdirSync(filmesPath);
-
-  categorias.forEach(cat => {
-    const catPath = path.join(filmesPath, cat);
-
-    if (fs.statSync(catPath).isDirectory()) {
-
-      const files = fs.readdirSync(catPath)
-        .filter(f => f.match(/\.(mp4|avi|mkv)$/));
-
-      files.forEach(f => {
-        const name = f.replace(/\.(mp4|avi|mkv)$/i, '');
-        const img = `${name}.jpg`;
-
-        filmesList += `
-          <a href="/watch?file=Filmes/${cat}/${f}">
-            <div class="card">
-              <img src="/thumb?img=Filmes/${cat}/${img}">
-              <div class="title">${name}</div>
-            </div>
-          </a>
-        `;
-      });
-
-    }
-  });
+function getLocalIPs() {
+  const ips = [];
+  for (const iface of Object.values(os.networkInterfaces()).flat()) {
+    if (iface && iface.family === 'IPv4' && !iface.internal) ips.push(iface.address);
+  }
+  return ips;
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Rotas
+// ─────────────────────────────────────────────────────────────────────────────
 
-// ===== SERIES =====
-const seriesPath = path.join(VIDEO_DIR, 'Series');
+// Home: lista filmes e séries
+app.get('/', async (req, res, next) => {
+  try {
+    const [movies, series] = await Promise.all([
+      scanMovies(VIDEO_DIR),
+      scanSeries(VIDEO_DIR),
+    ]);
+    res.type('html').send(renderHome({ movies, series }));
+  } catch (err) {
+    next(err);
+  }
+});
 
-if (fs.existsSync(seriesPath)) {
-  const categorias = fs.readdirSync(seriesPath);
+// Página de detalhe da série (lista episódios)
+app.get('/serie', async (req, res, next) => {
+  const nome = req.query.nome;
+  if (!nome) return res.status(400).send('Parâmetro "nome" obrigatório');
 
-  categorias.forEach(cat => {
-    const catPath = path.join(seriesPath, cat);
+  try {
+    const seriePath = safeJoin(VIDEO_DIR, 'Series', nome);
+    const episodes = await listEpisodes(seriePath, ['Series', decodeURIComponent(nome)]);
+    res.type('html').send(renderSerie({ nome: decodeURIComponent(nome), episodes }));
+  } catch (err) {
+    if (err.code === 'EBADPATH') return res.status(400).send('Caminho inválido');
+    if (err.code === 'ENOENT') return res.status(404).send('Série não encontrada');
+    next(err);
+  }
+});
 
-    if (fs.statSync(catPath).isDirectory()) {
+// Player
+app.get('/watch', (req, res) => {
+  const file = req.query.file;
+  if (!file) return res.status(400).send('Parâmetro "file" obrigatório');
 
-      const files = fs.readdirSync(catPath)
-        .filter(f => f.match(/\.(mp4|avi|mkv)$/));
-
-      files.forEach(f => {
-        const name = f.replace(/\.(mp4|avi|mkv)$/i, '');
-
-        seriesList += `
-          <a href="/serie?nome=${cat}">
-            <div class="card">
-              <div class="thumb">📺</div>
-              <div class="title">${cat}</div>
-            </div>
-          </a>
-        `;
-      });
-
-    }
-  });
-}
-
-    res.writeHead(200, { 'Content-Type': 'text/html' });
-return res.end(`
-<!DOCTYPE html>
-<html>
-<head>
-  <meta charset="UTF-8">
-  <title>Minha Biblioteca</title>
-  <style>
-    body {
-      margin: 0;
-      font-family: Arial;
-      background: #141414;
-      color: white;
-    }
-
-    h1 {
-      padding: 20px;
-    }
-
-    .grid {
-      display: grid;
-      grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
-      gap: 15px;
-      padding: 20px;
-    }
-
-    .card {
-      background: #1f1f1f;
-      border-radius: 10px;
-      overflow: hidden;
-      transition: 0.3s;
-      cursor: pointer;
-    }
-
-    .card img {
-     width: 100%;
-     height: 250px;
-     object-fit: cover;
-    }
-
-    .card:hover {
-      transform: scale(1.05);
-      background: #2a2a2a;
-    }
-
-    .thumb {
-      height: 120px;
-      background: #333;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      font-size: 40px;
-    }
-
-    .title {
-      padding: 10px;
-      font-size: 14px;
-      word-break: break-word;
-    }
-
-    a {
-      text-decoration: none;
-      color: white;
-    }
-  </style>
-</head>
-<body>
-
-  <h1>🎬 POBREFLIX</h1>
-
- <h2 style="padding: 20px;">🎬 Filmes</h2>
-<div class="grid">
-  ${filmesList}
-</div>
-
-<h2 style="padding: 20px;">📺 Séries</h2>
-<div class="grid">
-  ${seriesList}
-</div>
-
-</body>
-</html>
-`);
+  let absPath;
+  try {
+    absPath = safeJoin(VIDEO_DIR, file);
+  } catch {
+    return res.status(400).send('Caminho inválido');
   }
 
-  // Página de player
-  
-  else if (req.url.startsWith('/serie')) {
-  const nome = new URL(req.url, `http://${req.headers.host}`).searchParams.get('nome');
-
-  const seriePath = path.join(VIDEO_DIR, 'Series', nome);
-
-  if (!fs.existsSync(seriePath)) {
-    res.writeHead(404);
-    return res.end('Série não encontrada');
+  if (!fs.existsSync(absPath)) {
+    return res.status(404).send('Arquivo não encontrado');
   }
 
-  const files = fs.readdirSync(seriePath)
-    .filter(f => f.match(/\.(mp4|avi|mkv)$/));
+  // Procura legenda .vtt com o mesmo nome do vídeo
+  const vttPath = absPath.replace(/\.\w+$/, '.vtt');
+  const hasSubtitle = fs.existsSync(vttPath);
 
-  const list = files.map((f, i) => {
-    return `
-      <a href="/watch?file=Series/${nome}/${f}&index=${i}&serie=${nome}">
-        <div class="card">
-          <div class="thumb">▶</div>
-          <div class="title">${f}</div>
-        </div>
-      </a>
-    `;
-  }).join('');
+  res.type('html').send(renderWatch({ file: decodeURIComponent(file), hasSubtitle }));
+});
 
-  res.writeHead(200, { 'Content-Type': 'text/html' });
+// Streaming do vídeo (com suporte a Range Requests)
+app.get('/video', (req, res) => {
+  const file = req.query.file;
+  if (!file) return res.status(400).send('Parâmetro "file" obrigatório');
 
-  return res.end(`
-    <html>
-    <body style="background:#141414;color:white;font-family:Arial">
-
-      <h1 style="padding:20px">${nome}</h1>
-
-      <div class="grid">
-        ${list}
-      </div>
-
-      <a href="/" style="position:absolute;top:10px;left:10px;color:white">⬅ Voltar</a>
-
-    </body>
-    </html>
-  `);
-}
-  
-  else if (req.url.startsWith('/watch')) {
-    const file = new URL(req.url, `http://${req.headers.host}`).searchParams.get('file');
-
-    res.writeHead(200, { 'Content-Type': 'text/html' });
-return res.end(`
-<!DOCTYPE html>
-<html>
-<head>
-  <meta charset="UTF-8">
-  <style>
-    body {
-      margin: 0;
-      background: black;
-      display: flex;
-      flex-direction: column;
-      height: 100vh;
-    }
-
-    video {
-      width: 100%;
-      height: 100%;
-      background: black;
-    }
-
-    .topbar {
-      position: absolute;
-      top: 10px;
-      left: 10px;
-    }
-
-    a {
-      color: white;
-      text-decoration: none;
-      font-size: 18px;
-      background: rgba(0,0,0,0.6);
-      padding: 8px 12px;
-      border-radius: 5px;
-    }
-  </style>
-</head>
-<body>
-
-  <div class="topbar">
-    <a href="/">⬅ Voltar</a>
-  </div>
-
-</body>
-</html>
-`);
+  let videoPath;
+  try {
+    videoPath = safeJoin(VIDEO_DIR, file);
+  } catch {
+    return res.status(400).send('Caminho inválido');
   }
 
-  // Streaming
-  else if (req.url.startsWith('/video')) {
-    const file = new URL(req.url, `http://${req.headers.host}`).searchParams.get('file');
-    const videoPath = path.join(VIDEO_DIR, file);
+  fs.stat(videoPath, (err, stat) => {
+    if (err) return res.status(404).send('Arquivo não encontrado');
 
-    if (!fs.existsSync(videoPath)) {
-      res.writeHead(404);
-      return res.end('Arquivo não encontrado');
-    }
-
-    const stat = fs.statSync(videoPath);
     const fileSize = stat.size;
+    const contentType = getContentType(videoPath);
     const range = req.headers.range;
-    const contentType = getContentType(file);
 
     if (range) {
       const parts = range.replace(/bytes=/, '').split('-');
       const start = parseInt(parts[0], 10);
       const end = parts[1] ? parseInt(parts[1], 10) : fileSize - 1;
 
-      const chunkSize = (end - start) + 1;
-      const stream = fs.createReadStream(videoPath, { start, end });
+      if (start >= fileSize || end >= fileSize) {
+        res.writeHead(416, { 'Content-Range': `bytes */${fileSize}` });
+        return res.end();
+      }
 
+      const chunkSize = end - start + 1;
       res.writeHead(206, {
         'Content-Range': `bytes ${start}-${end}/${fileSize}`,
         'Accept-Ranges': 'bytes',
         'Content-Length': chunkSize,
         'Content-Type': contentType,
       });
-
-      stream.pipe(res);
+      fs.createReadStream(videoPath, { start, end }).pipe(res);
     } else {
       res.writeHead(200, {
         'Content-Length': fileSize,
         'Content-Type': contentType,
       });
-
       fs.createReadStream(videoPath).pipe(res);
     }
+  });
+});
+
+// Capas / thumbnails (com cache do navegador)
+app.get('/thumb', (req, res) => {
+  const img = req.query.img;
+  if (!img) return res.status(400).send('Parâmetro "img" obrigatório');
+
+  let imgPath;
+  try {
+    imgPath = safeJoin(VIDEO_DIR, img);
+  } catch {
+    return res.status(400).send('Caminho inválido');
   }
 
-    else if (req.url.startsWith('/thumb')) {
-      const img = new URL(req.url, `http://${req.headers.host}`).searchParams.get('img');
-      const imgPath = path.join(__dirname, img);
+  fs.stat(imgPath, (err) => {
+    if (err) return res.status(404).send('Imagem não encontrada');
+    const type = IMAGE_TYPES[path.extname(imgPath).toLowerCase()] || 'image/jpeg';
+    res.setHeader('Content-Type', type);
+    res.setHeader('Cache-Control', 'public, max-age=86400');
+    fs.createReadStream(imgPath).pipe(res);
+  });
+});
 
-      console.log("Imagem solicitada:", img);
-      console.log("Caminho:", imgPath);
+// Legendas WebVTT
+app.get('/subtitle', (req, res) => {
+  const file = req.query.file;
+  if (!file) return res.status(400).send('Parâmetro "file" obrigatório');
 
-      if (fs.existsSync(imgPath)) {
-       res.writeHead(200, { 'Content-Type': 'image/jpeg' });
-       fs.createReadStream(imgPath).pipe(res);
-     } else {
-          console.log("Imagem NÃO encontrada");
-          res.writeHead(404);
-          res.end("Imagem não encontrada");
+  let subPath;
+  try {
+    subPath = safeJoin(VIDEO_DIR, file);
+  } catch {
+    return res.status(400).send('Caminho inválido');
   }
-} 
 
-  else {
-    res.writeHead(404);
-    res.end('Rota não encontrada');
+  fs.stat(subPath, (err) => {
+    if (err) return res.status(404).send('Legenda não encontrada');
+    res.setHeader('Content-Type', 'text/vtt; charset=utf-8');
+    fs.createReadStream(subPath).pipe(res);
+  });
+});
+
+// 404 catch-all
+app.use((req, res) => res.status(404).send('Rota não encontrada'));
+
+// Handler global de erro
+app.use((err, req, res, _next) => {
+  console.error('Erro:', err);
+  res.status(500).send('Erro interno');
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Boot
+// ─────────────────────────────────────────────────────────────────────────────
+
+app.listen(PORT, '0.0.0.0', () => {
+  const ips = getLocalIPs();
+  console.log('');
+  console.log('  ╔══════════════════════════════════════╗');
+  console.log('  ║          🎬 POBREFLIX ONLINE         ║');
+  console.log('  ╚══════════════════════════════════════╝');
+  console.log('');
+  console.log(`  Local:    http://localhost:${PORT}`);
+  for (const ip of ips) {
+    console.log(`  Rede:     http://${ip}:${PORT}`);
   }
-
-}).listen(PORT, '0.0.0.0', () => {
-  console.log(`http://192.168.98.14:${PORT}`);
+  console.log(`  Pasta:    ${VIDEO_DIR}`);
+  console.log('');
+  console.log('  Pressione Ctrl+C para parar');
+  console.log('');
 });
